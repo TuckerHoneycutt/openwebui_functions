@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  open-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: open-webui-pdf-formatter
+    ports:
+      - "3000:8080"
+    volumes:
+      # Persist OpenWebUI data
+      - open-webui-data:/app/backend/data
+      # Persist templates across container restarts
+      - ./templates:/app/templates
+      # Optional: Mount temp directory for debugging
+      - ./temp:/app/temp
+    environment:
+      # Template storage directory (persisted via volume)
+      - TEMPLATE_STORAGE_DIR=/app/templates
+      # PDF temp directory
+      - PDF_TEMP_DIR=/app/temp
+      # Add other OpenWebUI environment variables as needed
+      # - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    restart: unless-stopped
+
+volumes:
+  open-webui-data:
