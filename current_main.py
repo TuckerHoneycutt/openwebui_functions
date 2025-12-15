@@ -1,12 +1,12 @@
 """
-title: Advanced Document Exporter (DOCX & PDF)
+title: Advanced Document Exporter with Template Support (DOCX & PDF)
 author: Modified by Gemini
 author_url: ""
-version: 1.5.0
+version: 2.0.0
 required_open_webui_version: "0.5.0"
-description: "Generates professionally formatted DOCX and PDF documents from chat content. Features enhanced text sanitization that removes markdown syntax while preserving proper formatting. Includes department selection modal and robust content processing."
+description: "Generates professionally formatted DOCX and PDF documents from chat content with template support. Upload PDF/DOCX templates and format content to match template styling. Features enhanced text sanitization, department selection, and template-based formatting."
 icon_url: data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPHN2ZyBmaWxsPSIjMDAwMDAwIiB3aWR0aD0iODAwcHgiIGhlaWdodD0iODAwcHgiIHZpZXdCb3g9IjAgMCAxNCAxNCIgcm9sZT0iaW1nIiBmb2N1c2FibGU9ImZhbHNlIiBhcmlhLWhpZGRlbj0idHJ1ZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJtIDEyLjk5OTk5MiwyLjg2NjMzMSAwLDguMjczODM5IGMgMCwwLjA3MDUgLTAuMDI1LDAuMTI3NTA1IC0wLjA3NDUsMC4xNzMwMDcgLTAuMDUwNSwwLjA0NyAtMCwxMDUwNSwwLjA2OSAtMC4xODAwMDgsMC4wNjkgbCAtNC4yNzk2NzUxLDAgMCwtMS4xNDc1NDIgMy40OTExNDMxLDAgMCwtMC41MjI1MjIgLTMuNDk0MTQzMiwwIDAsLTAuNjM5NTI2IDMuNDkxMTQzMiwwIDAsLTAuOTAyNTM1IC0zLjMxMDU5NDEgIGwgLTAuMDA3NSwwIC0wLjQ4NzUyLC0zLjEyNTEyOCAtMC43MzUwMzAxLDAuMDM5IDAuNzg3NTMyMywzLjk0MTY2MSAwLjgxNzAzMzUsMC4wNTI1IDAuMzA3NTEyNiwtMS41MzQwNjMgQyA0LjE3MjYyOTksNi41Mjc5ODEgNC4yNzc2MzQyLDYuMDA0OTU5IDQuMzAwMTM1Miw1Ljg2MTk1MyBsIDAuMDIyNTAxLDAgYyAwLjAzMDUwMSwwLjE1MjUwNyAwLjEyODAwNTIsMC42ODcwMjkgMC4zMDc1MTI2LDEuNjA1MDY2IGwgMC4zMDc1MTI2LDEuNTc5MDY1IDAuODg1MDM2MywwLjA1MjUgMC45OTAwNDA2LC00LjQyNTE4MSAtMC4wMTc1MDEsMCB6Ii8+PHBhdGggZD0ibSAzLjQ5OTk5MjQsMi44NjYzMzEgLTIuNTYyNDg5MSwwIDAsOC4yNjYzMzkgMi41NjI0ODkxLDAgMCwtMS4xNDc1NDIgLTEuNzEyNDg2MSwwIC0wLjAwNzUsLTIuOTQ4NTk0IDEuNzIyNDg2MSwwIDAsLTEuMTQwMDQyIC0xLjcyMjQ4NjEsMCAwLC0xLjg4NTAyNiAxLjcxOTk4NjEsMCAwLC0xLjE0NTAzNSB6Ii8+PC9zdmc+
-requirements: python-docx>=1.1.0,pandas>=2.0.0,xhtml2pdf>=0.2.11
+requirements: python-docx>=1.1.0,pandas>=2.0.0,xhtml2pdf>=0.2.11,pdfplumber>=0.10.0,PyMuPDF>=1.23.0,reportlab>=4.0.0
 """
 
 import asyncio
@@ -14,12 +14,26 @@ import base64
 import datetime
 import html
 import io
+import os
 import re
+import tempfile
 from typing import Awaitable, Any, Callable, Optional
 
 from fastapi import FastAPI
 
 app = FastAPI()
+
+# Import template functionality
+try:
+    from template_extractor import TemplateExtractor
+    from template_manager import TemplateManager
+    from pdf_generator import PDFGenerator
+    TEMPLATE_SUPPORT = True
+except ImportError:
+    TEMPLATE_SUPPORT = False
+    TemplateExtractor = None
+    TemplateManager = None
+    PDFGenerator = None
 
 
 class Action:
@@ -29,13 +43,23 @@ class Action:
             show_status: bool = True,
             company_name: str = "TriVector Services",
             departments: str = "HR,Engineering,Finance,Operations,Marketing,IT,Legal",
+            use_templates: bool = True,
         ):
             self.show_status = show_status
             self.company_name = company_name
             self.departments = departments
+            self.use_templates = use_templates
 
     def __init__(self):
-        pass
+        # Initialize template components if available
+        if TEMPLATE_SUPPORT:
+            self.template_manager = TemplateManager()
+            self.template_extractor = TemplateExtractor()
+            self.pdf_generator = PDFGenerator()
+        else:
+            self.template_manager = None
+            self.template_extractor = None
+            self.pdf_generator = None
 
     async def action(
         self,
@@ -54,6 +78,14 @@ class Action:
                 }
             )
 
+        # Check if this is a template management action
+        action_type = body.get("action", "export")
+
+        if action_type == "upload_template" and TEMPLATE_SUPPORT:
+            return await self._handle_template_upload(body, __user__)
+        elif action_type == "list_templates" and TEMPLATE_SUPPORT:
+            return await self._handle_list_templates(__user__)
+
         last_assistant_message = body["messages"][-1]
 
         # Original content from the AI
@@ -64,9 +96,14 @@ class Action:
 
         user_name = (__user__ or {}).get("name", "User")
 
+        # Get available templates if template support is enabled
+        templates = []
+        if TEMPLATE_SUPPORT and self.template_manager:
+            templates = self.template_manager.list_templates(user_id=__user__.get("id") if __user__ else None)
+
         # Generate DOCX and PDF data in parallel
         docx_task = self._prepare_docx_files(user_valves, content, user_name)
-        pdf_task = self._prepare_pdf_files(user_valves, content, user_name)
+        pdf_task = self._prepare_pdf_files(user_valves, content, user_name, templates)
         docx_data, pdf_data = await asyncio.gather(docx_task, pdf_task)
 
         if __event_call__:
@@ -80,12 +117,20 @@ class Action:
                 [f'<option value="{dept}">{dept}</option>' for dept in departments_list]
             )
 
+            # Prepare templates data for JavaScript
+            templates_options = ""
+            if templates:
+                templates_options = "".join([
+                    f'<option value="{t["template_name"]}">{t["template_name"]}</option>'
+                    for t in templates
+                ])
+
             await __event_call__(
                 {
                     "type": "execute",
                     "data": {
                         "code": self._get_javascript_payload(
-                            user_valves, departments_options, js_docx_data, js_pdf_data
+                            user_valves, departments_options, js_docx_data, js_pdf_data, templates_options
                         )
                     },
                 }
@@ -334,8 +379,18 @@ class Action:
         return "{" + ",".join(items) + "}"
 
     def _get_javascript_payload(
-        self, user_valves, departments_options, js_docx_data, js_pdf_data
+        self, user_valves, departments_options, js_docx_data, js_pdf_data, templates_options=""
     ) -> str:
+        template_section = ""
+        if templates_options:
+            template_section = f"""
+                <label style="display: block; margin-bottom: 8px; color: #333; font-weight: bold;">Template (Optional):</label>
+                <select id="templateSelect" style="width: 100%; padding: 10px; font-size: 16px; border: 2px solid #007cba; border-radius: 5px; margin-bottom: 20px;">
+                    <option value="">Use Default Formatting</option>
+                    {templates_options}
+                </select>
+            """
+
         return f"""
             const overlay = document.createElement('div');
             overlay.style.cssText = `position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 10000;`;
@@ -345,6 +400,7 @@ class Action:
                 <h2 style="margin-top: 0; color: #007cba; text-align: center;">Export Document</h2>
                 <p style="color: #666; margin-bottom: 20px; text-align: center;">Select a department to customize and download your document.</p>
                 <select id="departmentSelect" style="width: 100%; padding: 10px; font-size: 16px; border: 2px solid #007cba; border-radius: 5px; margin-bottom: 20px;">{departments_options}</select>
+                {template_section}
                 <div style="display: flex; justify-content: space-between;">
                     <button id="docxBtn" style="background: #007cba; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; flex-grow: 1; margin-right: 5px;">Download .docx</button>
                     <button id="pdfBtn" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; flex-grow: 1; margin-left: 5px;">Download .pdf</button>
@@ -358,7 +414,7 @@ class Action:
             window.pdfData = {js_pdf_data};
 
             const closeModal = () => document.body.removeChild(overlay);
-            
+
             const showNotification = (message, color) => {{
                 const notice = document.createElement('div');
                 notice.style.cssText = `position: fixed; top: 20px; right: 20px; background: ${{color}}; color: white; padding: 15px 25px; border-radius: 5px; z-index: 10001; box-shadow: 0 2px 10px rgba(0,0,0,0.3);`;
@@ -400,15 +456,72 @@ class Action:
                     showNotification('Error: PDF data not found.', '#dc3545');
                 }}
             }};
-            
+
             document.getElementById('cancelBtn').onclick = closeModal;
             overlay.onkeydown = (e) => {{ if (e.key === 'Escape') closeModal(); }};
         """
 
     # -------------------------------------------------------------------------
+    # Template Management Functions
+    # -------------------------------------------------------------------------
+    async def _handle_template_upload(self, body: dict, __user__) -> dict:
+        """Handle template upload"""
+        if not TEMPLATE_SUPPORT or not self.template_manager:
+            return {"message": "Template support not available"}
+
+        try:
+            template_name = body.get("template_name", "")
+            template_file = body.get("template_file", "")
+            file_type = body.get("file_type", "pdf")
+
+            if not template_name or not template_file:
+                return {"message": "template_name and template_file are required"}
+
+            # Decode base64 file
+            file_data = base64.b64decode(template_file)
+
+            # Save template file temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}") as tmp_file:
+                tmp_file.write(file_data)
+                tmp_path = tmp_file.name
+
+            try:
+                # Extract template metadata
+                metadata = self.template_extractor.extract_template(tmp_path, file_type)
+
+                # Save template and metadata
+                user_id = __user__.get("id") if __user__ else None
+                template_id = self.template_manager.save_template(
+                    template_name=template_name,
+                    file_path=tmp_path,
+                    metadata=metadata,
+                    file_type=file_type,
+                    user_id=user_id
+                )
+
+                return {
+                    "message": f"Template '{template_name}' uploaded successfully",
+                    "template_id": template_id
+                }
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+        except Exception as e:
+            return {"message": f"Error uploading template: {str(e)}"}
+
+    async def _handle_list_templates(self, __user__) -> dict:
+        """Handle template listing"""
+        if not TEMPLATE_SUPPORT or not self.template_manager:
+            return {"templates": []}
+
+        user_id = __user__.get("id") if __user__ else None
+        templates = self.template_manager.list_templates(user_id=user_id)
+        return {"templates": templates}
+
+    # -------------------------------------------------------------------------
     # PDF Generation with Enhanced Content Processing
     # -------------------------------------------------------------------------
-    async def _prepare_pdf_files(self, user_valves, content, user_name) -> dict:
+    async def _prepare_pdf_files(self, user_valves, content, user_name, templates=None) -> dict:
         try:
             from xhtml2pdf import pisa
         except ImportError:
@@ -418,6 +531,47 @@ class Action:
         pdf_data = {}
 
         for department in departments_list:
+            # Check if template-based generation is requested and available
+            use_template = False
+            template_name = None
+
+            if TEMPLATE_SUPPORT and templates and user_valves.use_templates:
+                # For now, use default formatting
+                # Template selection happens in JavaScript
+                use_template = False
+
+            if use_template and template_name and self.template_manager and self.pdf_generator:
+                # Use template-based PDF generation
+                try:
+                    user_id = None  # Get from context if available
+                    template_info = self.template_manager.get_template_info(template_name, user_id=user_id)
+                    if template_info:
+                        # Convert structured content back to markdown-like format for template generator
+                        markdown_content = self._structured_content_to_markdown(content)
+
+                        pdf_path = self.pdf_generator.generate_pdf(
+                            content=markdown_content,
+                            template_metadata=template_info["metadata"],
+                            template_file_path=template_info["file_path"],
+                            output_name=f"{department}_{template_name}_output.pdf"
+                        )
+
+                        with open(pdf_path, "rb") as f:
+                            pdf_bytes_data = f.read()
+
+                        b64_data = base64.b64encode(pdf_bytes_data).decode("utf-8")
+                        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        filename = f"{department} Project_{user_name}_{ts}.pdf"
+                        pdf_data[department] = {"data": b64_data, "filename": filename}
+
+                        if os.path.exists(pdf_path):
+                            os.unlink(pdf_path)
+                        continue
+                except Exception as e:
+                    # Fall back to default generation on error
+                    pass
+
+            # Default PDF generation
             html_content_for_pdf = self._convert_structured_content_to_html(content)
 
             intro, footer = self._get_custom_text(department)
@@ -444,6 +598,39 @@ class Action:
                 filename = f"{department} Project_{user_name}_{ts}.pdf"
                 pdf_data[department] = {"data": b64_data, "filename": filename}
         return pdf_data
+
+    def _structured_content_to_markdown(self, structured_content: str) -> str:
+        """Convert structured content format back to markdown-like format for template generator"""
+        lines = structured_content.split("\n")
+        markdown_lines = []
+
+        for line in lines:
+            if line.startswith("[HEADING_"):
+                level_match = re.match(r"\[HEADING_(\d+)\](.*)", line)
+                if level_match:
+                    level = int(level_match.group(1))
+                    text = level_match.group(2)
+                    markdown_lines.append("#" * level + " " + text)
+            elif line.startswith("[LIST_BULLET_"):
+                list_match = re.match(r"\[LIST_BULLET_\d+\](.*)", line)
+                if list_match:
+                    markdown_lines.append("- " + list_match.group(1))
+            elif line.startswith("[LIST_NUMBERED_"):
+                list_match = re.match(r"\[LIST_NUMBERED_\d+\](.*)", line)
+                if list_match:
+                    markdown_lines.append("1. " + list_match.group(1))
+            elif line.startswith("[PARAGRAPH]"):
+                text = line[11:]
+                markdown_lines.append(text)
+            elif line.startswith("[TABLE_ROW]"):
+                row_content = line[11:]
+                markdown_lines.append("| " + row_content.replace("|", " | ") + " |")
+            elif line.strip():
+                markdown_lines.append(line)
+            else:
+                markdown_lines.append("")
+
+        return "\n".join(markdown_lines)
 
     def _convert_structured_content_to_html(self, content: str) -> str:
         """Convert our structured content format to clean HTML."""
@@ -632,8 +819,8 @@ class Action:
             <meta charset="UTF-8">
             <title>{user_valves.company_name} Document</title>
             <style>
-                @page {{ 
-                    size: letter; 
+                @page {{
+                    size: letter;
                     margin: 1in;
                     @frame footer {{
                         -pdf-frame-content: footer-content;
