@@ -18,8 +18,10 @@ services:
       - ./templates:/app/templates
       # Temp directory for generated PDFs
       - ./temp:/app/temp
-      # Mount custom functions for easier updates (optional)
-      - ./custom-functions:/app/custom-functions
+      # Mount functions directory (if OpenWebUI uses a different location, adjust this)
+      # Functions are also copied to /app/functions/ during build
+      # Uncomment and adjust path if needed:
+      # - ./functions:/app/functions
     environment:
       # Template storage directory (persisted via volume)
       - TEMPLATE_STORAGE_DIR=/app/templates
@@ -27,24 +29,9 @@ services:
       - PDF_TEMP_DIR=/app/temp
       # Add other OpenWebUI environment variables as needed
       # - OLLAMA_BASE_URL=http://host.docker.internal:11434
-    # Run initialization script before OpenWebUI starts
-    # This ensures functions are installed on every container start/restart
-    # The script runs and then OpenWebUI starts normally
-    # We try to preserve OpenWebUI's original entrypoint, falling back if needed
-    entrypoint:
-      - /bin/bash
-      - -c
-      - |
-        /app/init-template-functions.sh
-        # Try to find and execute OpenWebUI's original entrypoint
-        if [ -f /entrypoint.sh ]; then
-          exec /entrypoint.sh "$$@"
-        elif [ -f /app/entrypoint.sh ]; then
-          exec /app/entrypoint.sh "$$@"
-        else
-          # Fallback: start OpenWebUI directly
-          exec python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8080 "$$@"
-        fi
+    # Initialize functions on container start using a post-start approach
+    # The init script will be run automatically via a startup hook
+    # Alternative: Run manually after container starts: docker exec -it open-webui-template-formatter /app/init-template-functions.sh
     restart: unless-stopped
 
 volumes:
