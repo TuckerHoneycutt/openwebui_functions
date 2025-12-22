@@ -52,61 +52,8 @@ RUN mkdir -p /app/backend/functions && \
     cp /app/functions/template_action.py /root/.open-webui/functions/ && \
     chmod -R 755 /app/functions /app/backend/functions /app/open-webui/functions /root/.open-webui/functions
 
-# Create startup script that runs automatically on container start
-# This ensures functions are copied to the correct location even if it's created at runtime
-RUN cat > /app/startup-functions.sh << 'EOFSTARTUP'
-#!/bin/bash
-# This script runs automatically on container start to ensure functions are in the right place
-
-# Find and copy functions to any newly created functions directories
-FUNC_SOURCE="/app/functions"
-FUNC_TARGETS=(
-    "/app/backend/functions"
-    "/app/open-webui/functions"
-    "/root/.open-webui/functions"
-    "$HOME/.open-webui/functions"
-)
-
-# Copy functions to any existing or newly created directories
-for target in "${FUNC_TARGETS[@]}"; do
-    if [ -d "$(dirname "$target")" ] 2>/dev/null || mkdir -p "$(dirname "$target")" 2>/dev/null; then
-        mkdir -p "$target" 2>/dev/null || true
-        cp -f "$FUNC_SOURCE"/*.py "$target/" 2>/dev/null || true
-    fi
-done
-
-# Also search for any functions directories that might exist
-FOUND_DIRS=$(find /app -name "functions" -type d 2>/dev/null || true)
-for dir in $FOUND_DIRS; do
-    if [ "$dir" != "$FUNC_SOURCE" ]; then
-        cp -f "$FUNC_SOURCE"/*.py "$dir/" 2>/dev/null || true
-    fi
-done
-EOFSTARTUP
-RUN chmod +x /app/startup-functions.sh
-
-# Create wrapper that runs startup script then preserves OpenWebUI's original entrypoint
-# This ensures functions are available on every container start
-RUN cat > /app/docker-entrypoint-wrapper.sh << 'EOFWRAPPER'
-#!/bin/bash
-# Run startup script to ensure functions are in place
-/app/startup-functions.sh || true
-
-# Preserve OpenWebUI's original entrypoint
-# Check for common entrypoint locations
-if [ -f /entrypoint.sh ]; then
-    exec /entrypoint.sh "$@"
-elif [ -f /app/entrypoint.sh ]; then
-    exec /app/entrypoint.sh "$@"
-elif [ -f /docker-entrypoint.sh ]; then
-    exec /docker-entrypoint.sh "$@"
-else
-    # No entrypoint found - execute command directly (preserves CMD from base image)
-    exec "$@"
-fi
-EOFWRAPPER
-RUN chmod +x /app/docker-entrypoint-wrapper.sh
-
-# Override entrypoint to use our wrapper
-# This runs automatically on every container start
-ENTRYPOINT ["/app/docker-entrypoint-wrapper.sh"]
+# Functions are copied to all possible locations during build
+# This ensures they're available regardless of where OpenWebUI looks
+# No entrypoint override needed - OpenWebUI will start normally and find functions
+# If OpenWebUI creates a new functions directory at runtime, functions can be manually copied
+# or you can mount /app/functions as a volume to the functions directory
