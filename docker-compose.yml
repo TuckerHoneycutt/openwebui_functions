@@ -5,6 +5,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Use --no-cache to ensure fresh build
+      # args:
+      #   BUILDKIT_INLINE_CACHE: "1"
     container_name: open-webui-template-formatter
     ports:
       - "3000:8080"
@@ -24,6 +27,24 @@ services:
       - PDF_TEMP_DIR=/app/temp
       # Add other OpenWebUI environment variables as needed
       # - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    # Run initialization script before OpenWebUI starts
+    # This ensures functions are installed on every container start/restart
+    # The script runs and then OpenWebUI starts normally
+    # We try to preserve OpenWebUI's original entrypoint, falling back if needed
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        /app/init-template-functions.sh
+        # Try to find and execute OpenWebUI's original entrypoint
+        if [ -f /entrypoint.sh ]; then
+          exec /entrypoint.sh "$$@"
+        elif [ -f /app/entrypoint.sh ]; then
+          exec /app/entrypoint.sh "$$@"
+        else
+          # Fallback: start OpenWebUI directly
+          exec python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8080 "$$@"
+        fi
     restart: unless-stopped
 
 volumes:
