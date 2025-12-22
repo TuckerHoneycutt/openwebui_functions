@@ -34,11 +34,11 @@ def check_imports():
         print(f"✗ template_manager: {e}")
 
     try:
-        import functions
-        print("✓ functions imported successfully")
+        import template_function
+        print("✓ template_function imported successfully")
     except ImportError as e:
-        errors.append(f"✗ functions: {e}")
-        print(f"✗ functions: {e}")
+        errors.append(f"✗ template_function: {e}")
+        print(f"✗ template_function: {e}")
 
     return len(errors) == 0
 
@@ -107,8 +107,8 @@ def check_function_schema():
     """Check if function schema can be retrieved"""
     print("\nChecking function schema...")
     try:
-        import functions
-        schema = functions.get_function_schema()
+        import template_function
+        schema = template_function.get_function_schema()
         if schema and "name" in schema:
             print(f"✓ Function schema retrieved: {schema['name']}")
             return True

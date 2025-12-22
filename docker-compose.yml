@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: open-webui-pdf-formatter
+    container_name: open-webui-template-formatter
     ports:
       - "3000:8080"
     volumes:
@@ -13,8 +13,10 @@ services:
       - open-webui-data:/app/backend/data
       # Persist templates across container restarts
       - ./templates:/app/templates
-      # Optional: Mount temp directory for debugging
+      # Temp directory for generated PDFs
       - ./temp:/app/temp
+      # Mount custom functions for easier updates (optional)
+      - ./custom-functions:/app/custom-functions
     environment:
       # Template storage directory (persisted via volume)
       - TEMPLATE_STORAGE_DIR=/app/templates

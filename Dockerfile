@@ -23,11 +23,14 @@ ENV TEMPLATE_STORAGE_DIR=/app/templates
 ENV PDF_TEMP_DIR=/app/temp
 
 # Copy function files to OpenWebUI functions directory
-# Adjust this path based on your OpenWebUI installation
-# Note: You may need to copy these manually after container starts
-# or mount them as volumes, as the exact path varies by OpenWebUI version
-COPY functions.py template_extractor.py pdf_generator.py template_manager.py /app/custom-functions/
+# OpenWebUI typically loads functions from /app/functions/ or ~/.open-webui/functions/
+# We'll copy to a custom location and mount as volume for easier updates
+COPY template_function.py template_action.py template_extractor.py pdf_generator.py template_manager.py /app/custom-functions/
 COPY verify_setup.py /app/
 
 # Set permissions
 RUN chmod -R 755 /app/templates /app/temp /app/custom-functions /app/verify_setup.py
+
+# Note: After container starts, copy files to OpenWebUI functions directory:
+# docker exec -it <container> cp /app/custom-functions/*.py /app/functions/ 2>/dev/null || \
+# docker exec -it <container> mkdir -p ~/.open-webui/functions && cp /app/custom-functions/*.py ~/.open-webui/functions/
